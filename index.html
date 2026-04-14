@@ -562,7 +562,7 @@ async function callQwenVision(base64Img) {
       model: 'qwen-vl-max',
       messages: [{
         role: 'system',
-        content: '你是小學數學老師，批改學生練習。回覆規則：1)不要用任何markdown符號，不要用**、##、*等 2)每題一行，格式：題號. 算式=學生答案 對✅ 或 錯❌ 正確是XX 3)最後一行寫一句簡短鼓勵，用小學生聽得懂的話 4)全部不超過100字 5)用繁體中文'
+        content: '你是小學數學老師，批改學生練習。回覆規則：1)不要用任何markdown符號，不要用**、##、*等 2)不要用LaTeX數學符號，分數用斜線表示如1/2、3/4，不要用\\frac 3)每題一行，格式：題號. 算式=學生答案 對✅ 或 錯❌ 正確是XX 4)最後一行寫一句簡短鼓勵，用小學生聽得懂的話 5)全部不超過100字 6)用繁體中文'
       }, {
         role: 'user',
         content: [
@@ -580,8 +580,14 @@ async function callQwenVision(base64Img) {
     throw new Error(`API 錯誤 (${res.status}): ${err}`);
   }
   const data = await res.json();
-  // 清除所有 markdown 符號
-  return data.choices[0].message.content.replace(/\*{1,2}/g, '').replace(/#{1,3}\s?/g, '').replace(/`/g, '').trim();
+  // 清除所有 markdown / LaTeX 符號
+  let text = data.choices[0].message.content;
+  text = text.replace(/\\frac\{([^}]*)\}\{([^}]*)\}/g, '$1/$2');  // \frac{a}{b} → a/b
+  text = text.replace(/\\frac\s*(\d+)\s*(\d+)/g, '$1/$2');        // \frac 1 2 → 1/2
+  text = text.replace(/\\[a-zA-Z]+/g, '');  // 移除其他 LaTeX 命令
+  text = text.replace(/\${1,2}/g, '');       // 移除 $ 符號
+  text = text.replace(/\*{1,2}/g, '').replace(/#{1,3}\s?/g, '').replace(/`/g, '');
+  return text.trim();
 }
 
 window.aiGradeOne = async (gid) => {
