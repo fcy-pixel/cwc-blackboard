@@ -37,6 +37,17 @@ body.student-mode #sidebar { display: none; }
 
 .cam-btn { position: relative; overflow: hidden; display: inline-block; vertical-align: middle; }
 .cam-btn input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
+
+/* AI 批改相關 */
+.btn-ai { background: #9C27B0; color: white; }
+.btn-ai:disabled { background: #ccc; cursor: not-allowed; }
+.btn-ai-all { background: #7B1FA2; color: white; }
+.ai-comment { margin-top: 8px; padding: 10px; background: #f3e5f5; border-radius: 8px; font-size: 13px; line-height: 1.5; border-left: 4px solid #9C27B0; display: none; white-space: pre-wrap; }
+.ai-loading { color: #9C27B0; font-style: italic; }
+#ai-modal { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 99999; justify-content: center; align-items: center; }
+#ai-modal-box { background: white; border-radius: 16px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
+#ai-modal-box h3 { margin: 0 0 15px; color: #9C27B0; }
+#ai-modal-result { white-space: pre-wrap; line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -50,6 +61,11 @@ body.student-mode #sidebar { display: none; }
 <h4 style="margin:5px 0;">🏫 全班管理</h4>
 <button class="btn btn-tool" style="width:100%; margin-bottom:5px;" onclick="clearAllStrokes()">🧹 僅清空筆跡</button>
 <button class="btn btn-tool" style="width:100%; background:var(--teacher-red); color:white;" onclick="deleteAllBoards()">🔥 重設班級</button>
+</div>
+<div class="sidebar-section">
+<h4 style="margin:5px 0;">🤖 AI 批改設定</h4>
+<input type="password" id="qwen-key" placeholder="輸入 Qwen API Key" style="width:100%; padding:8px; border:2px solid #9C27B0; border-radius:8px; box-sizing:border-box; margin-bottom:8px; font-size:13px;">
+<button class="btn btn-ai-all" style="width:100%;" onclick="aiGradeAll()">🤖 一鍵批改全班</button>
 </div>
 <div class="sidebar-section">
 <h4 style="margin:5px 0;">👨‍🏫 示範板 (點擊寫字/放題目)</h4>
@@ -95,6 +111,15 @@ body.student-mode #sidebar { display: none; }
 <button class="btn btn-tool" style="margin-left:auto; background:#666; color:white;" onclick="closeFocus()">❌ 結束</button>
 </div>
 <div class="canvas-wrap" style="flex-grow:1;"><canvas id="focus-canvas"></canvas></div>
+</div>
+
+<div id="ai-modal">
+<div id="ai-modal-box">
+<h3>🤖 AI 批改結果</h3>
+<div id="ai-modal-name" style="font-weight:bold; margin-bottom:10px;"></div>
+<div id="ai-modal-result">載入中...</div>
+<button class="btn btn-tool" style="margin-top:15px; background:#9C27B0; color:white;" onclick="document.getElementById('ai-modal').style.display='none'">關閉</button>
+</div>
 </div>
 
 <script type="module">
@@ -355,7 +380,7 @@ if (window.myId === "Teacher") {
       const card = document.createElement('div');
       card.id = `card-${gid}`;
       card.className = 'group-card';
-      card.innerHTML = `<div class="card-header"><strong>👤 <span id="n-${gid}">${cachedData[gid]?.name || '學生'}</span></strong><button class="btn btn-tool" onclick="openFocus('${gid}')">🔍 批改</button></div><div class="canvas-wrap"><canvas id="can-${gid}"></canvas></div>`;
+      card.innerHTML = `<div class="card-header"><strong>👤 <span id="n-${gid}">${cachedData[gid]?.name || '學生'}</span></strong><span><button class="btn btn-ai" onclick="aiGradeOne('${gid}')">🤖</button> <button class="btn btn-tool" onclick="openFocus('${gid}')">🔍 批改</button></span></div><div class="canvas-wrap"><canvas id="can-${gid}"></canvas></div><div class="ai-comment" id="ai-${gid}"></div>`;
       grid.appendChild(card);
     }
   });
@@ -462,6 +487,120 @@ window.deleteAllBoards = () => {
   if (confirm("重設所有學生？")) {
     remove(ref(db, 'boards')).then(() => location.reload());
   }
+};
+
+// ========== AI 批改功能 (Qwen Vision API) ==========
+function getCanvasImage(gid) {
+  // 生成高解像度圖片用於 AI 辨識
+  const offscreen = document.createElement('canvas');
+  offscreen.width = V_WIDTH;
+  offscreen.height = V_HEIGHT;
+  const ctx = offscreen.getContext('2d');
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+  const gData = cachedData[gid];
+  if (!gData) return null;
+
+  // 畫背景圖
+  if (gData.bgImg && imgCache[gData.bgImg]) {
+    ctx.drawImage(imgCache[gData.bgImg], 0, 0, V_WIDTH, V_HEIGHT);
+  }
+
+  // 畫筆劃
+  if (gData.strokes) {
+    Object.values(gData.strokes).forEach(s => {
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = s.c === 'eraser' ? 'white' : s.c;
+      ctx.lineWidth = s.c === 'eraser' ? 30 : 4;
+      if (s.pts) {
+        ctx.beginPath();
+        ctx.moveTo(s.pts[0], s.pts[1]);
+        for (let i = 2; i < s.pts.length; i += 2) {
+          ctx.lineTo(s.pts[i], s.pts[i + 1]);
+        }
+        ctx.stroke();
+      } else if (s.x1 !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(s.x1, s.y1);
+        ctx.lineTo(s.x2, s.y2);
+        ctx.stroke();
+      }
+    });
+  }
+  return offscreen.toDataURL('image/png');
+}
+
+async function callQwenVision(base64Img) {
+  const apiKey = document.getElementById('qwen-key').value.trim();
+  if (!apiKey) { alert('請先在左邊輸入 Qwen API Key'); return null; }
+
+  const res = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'qwen-vl-max',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: base64Img } },
+          { type: 'text', text: '你是一位小學數學老師。請批改這張學生寫的數學題目圖片。\n要求：\n1. 辨識學生寫了什麼題目和答案\n2. 判斷每題對錯（✅ 或 ❌）\n3. 如果有錯，寫出正確答案\n4. 最後給一個簡短鼓勵評語\n請用繁體中文回答，格式簡潔清楚。' }
+        ]
+      }],
+      max_tokens: 500
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`API 錯誤 (${res.status}): ${err}`);
+  }
+  const data = await res.json();
+  return data.choices[0].message.content;
+}
+
+window.aiGradeOne = async (gid) => {
+  const img = getCanvasImage(gid);
+  if (!img) { alert('學生未作答'); return; }
+  const name = cachedData[gid]?.name || '學生';
+
+  // 顯示 modal
+  document.getElementById('ai-modal').style.display = 'flex';
+  document.getElementById('ai-modal-name').textContent = `📝 ${name}`;
+  document.getElementById('ai-modal-result').innerHTML = '<span class="ai-loading">🤖 AI 批改中...</span>';
+
+  try {
+    const comment = await callQwenVision(img);
+    document.getElementById('ai-modal-result').textContent = comment;
+    // 同時顯示在卡片下方
+    const el = document.getElementById(`ai-${gid}`);
+    if (el) { el.textContent = comment; el.style.display = 'block'; }
+  } catch (e) {
+    document.getElementById('ai-modal-result').textContent = '❌ 批改失敗: ' + e.message;
+  }
+};
+
+window.aiGradeAll = async () => {
+  const apiKey = document.getElementById('qwen-key').value.trim();
+  if (!apiKey) { alert('請先輸入 Qwen API Key'); return; }
+  const studentIds = Object.keys(cachedData).filter(k => k.startsWith('S_'));
+  if (studentIds.length === 0) { alert('目前沒有學生'); return; }
+  if (!confirm(`確定批改 ${studentIds.length} 位學生？`)) return;
+
+  for (const gid of studentIds) {
+    const name = cachedData[gid]?.name || '學生';
+    const el = document.getElementById(`ai-${gid}`);
+    if (el) { el.innerHTML = '<span class="ai-loading">🤖 批改中...</span>'; el.style.display = 'block'; }
+
+    try {
+      const img = getCanvasImage(gid);
+      if (!img) { if (el) el.textContent = '（未作答）'; continue; }
+      const comment = await callQwenVision(img);
+      if (el) el.textContent = comment;
+    } catch (e) {
+      if (el) el.textContent = '❌ ' + e.message;
+    }
+  }
+  alert('全班批改完成！');
 };
 </script>
 </body>
