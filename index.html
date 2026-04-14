@@ -561,13 +561,17 @@ async function callQwenVision(base64Img) {
     body: JSON.stringify({
       model: 'qwen-vl-max',
       messages: [{
+        role: 'system',
+        content: '你是小學數學老師，批改學生練習。回覆規則：1)不要用任何markdown符號，不要用**、##、*等 2)每題一行，格式：題號. 算式=學生答案 對✅ 或 錯❌ 正確是XX 3)最後一行寫一句簡短鼓勵，用小學生聽得懂的話 4)全部不超過100字 5)用繁體中文'
+      }, {
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: base64Img } },
-          { type: 'text', text: '你是一位小學數學老師，正在批改學生的數學練習。請看這張圖片並給出簡單批改。\n\n❗ 重要：看評語的是小學生，請用簡單易懂的語言。\n\n格式：\n每題一行：題號. 算式 = 學生答案 ✅/❌（錯的寫正確答案）\n\n最後用 1-2 句簡短評語：\n- 如果全對：表揚 + 鼓勵繼續保持\n- 如果有錯：指出哪個概念要注意（例如：「注意進位喔！」「乘法表再練習一下！」）+ 鼓勵\n\n請用繁體中文，全部內容不超過150字。' }
+          { type: 'text', text: '批改這張數學練習。' }
         ]
       }],
-      max_tokens: 500
+      max_tokens: 300,
+      temperature: 0.3
     })
   });
 
@@ -576,7 +580,8 @@ async function callQwenVision(base64Img) {
     throw new Error(`API 錯誤 (${res.status}): ${err}`);
   }
   const data = await res.json();
-  return data.choices[0].message.content;
+  // 清除所有 markdown 符號
+  return data.choices[0].message.content.replace(/\*{1,2}/g, '').replace(/#{1,3}\s?/g, '').replace(/`/g, '').trim();
 }
 
 window.aiGradeOne = async (gid) => {
