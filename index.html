@@ -67,6 +67,7 @@ body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px
 <div class="sidebar-section">
 <h4 style="margin:5px 0;">🤖 AI 批改設定</h4>
 <input type="password" id="qwen-key" placeholder="輸入 Qwen API Key" style="width:100%; padding:8px; border:2px solid #9C27B0; border-radius:8px; box-sizing:border-box; margin-bottom:8px; font-size:13px;">
+<button class="btn btn-tool" style="width:100%; margin-bottom:5px; background:#7B1FA2; color:white;" onclick="shareApiKey()">🔑 分享 Key 給學生</button>
 <button class="btn btn-ai-all" style="width:100%;" onclick="aiGradeAll()">🤖 一鍵批改全班</button>
 </div>
 <div class="sidebar-section">
@@ -84,6 +85,7 @@ body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px
 <button class="btn btn-tool" onclick="setDrawColor('eraser')">🧽</button>
 <button class="btn btn-tool" onclick="resetBoard(window.myId)">🧹 清空</button>
 <div class="cam-btn"><button class="btn btn-photo">📷 影相</button><input type="file" accept="image/*" capture="environment" onchange="handleFile(this, window.myId)"></div>
+<button class="btn btn-ai" id="student-ai-btn" style="display:none;" onclick="studentAiGrade()">🤖 AI批改</button>
 </div>
 <div class="grid" id="group-grid"></div>
 </div>
@@ -411,6 +413,14 @@ if (window.myId === "Teacher") {
   commentDiv.style.display = 'none';
   document.getElementById('main-content').appendChild(commentDiv);
 
+  // 監聽老師分享的 API Key，顯示學生端 AI 批改按鈕
+  onValue(ref(db, 'settings/apiKey'), (snap) => {
+    const key = snap.val();
+    const btn = document.getElementById('student-ai-btn');
+    if (btn) btn.style.display = key ? 'inline-block' : 'none';
+    window._sharedApiKey = key || '';
+  });
+
   // 監聽老師發送的 AI 批改結果
   onValue(ref(db, `boards/${window.myId}/aiComment`), (snap) => {
     const comment = snap.val();
@@ -510,6 +520,31 @@ window.deleteAllBoards = () => {
   }
 };
 
+// ========== 老師分享 API Key ==========
+window.shareApiKey = () => {
+  const key = document.getElementById('qwen-key').value.trim();
+  if (!key) { alert('請先輸入 API Key'); return; }
+  set(ref(db, 'settings/apiKey'), key);
+  alert('已分享 API Key 給學生，學生端會出現 AI批改 按鈕');
+};
+
+// ========== 學生端 AI 自批 ==========
+window.studentAiGrade = async () => {
+  const key = window._sharedApiKey;
+  if (!key) { alert('老師未分享 API Key'); return; }
+  const img = getCanvasImage(window.myId);
+  if (!img) { alert('你還沒有寫嘢'); return; }
+  const el = document.getElementById(`ai-${window.myId}`);
+  if (el) { el.innerHTML = '<span class="ai-loading">🤖 AI 批改中...</span>'; el.style.display = 'block'; }
+  try {
+    const comment = await callQwenVision(img, key);
+    if (el) el.textContent = comment;
+    update(ref(db, `boards/${window.myId}`), { aiComment: comment });
+  } catch (e) {
+    if (el) el.textContent = '❌ ' + e.message;
+  }
+};
+
 // ========== AI 批改功能 (Qwen Vision API) ==========
 function getCanvasImage(gid) {
   // 生成高解像度圖片用於 AI 辨識
@@ -551,9 +586,9 @@ function getCanvasImage(gid) {
   return offscreen.toDataURL('image/png');
 }
 
-async function callQwenVision(base64Img) {
-  const apiKey = document.getElementById('qwen-key').value.trim();
-  if (!apiKey) { alert('請先在左邊輸入 Qwen API Key'); return null; }
+async function callQwenVision(base64Img, apiKeyOverride) {
+  const apiKey = apiKeyOverride || (document.getElementById('qwen-key')?.value.trim()) || '';
+  if (!apiKey) { alert('沒有 API Key'); return null; }
 
   const res = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
     method: 'POST',
