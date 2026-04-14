@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CWC Blackboard - Ultimate Master</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<style>
+:root { --teacher-red: #ff4d4d; --bg: #f5f7fa; --primary: #2196F3; --success: #4CAF50; }
+html, body { position: fixed; overflow: hidden; width: 100%; height: 100%; margin: 0; font-family: sans-serif; background: var(--bg); display: flex; }
+
+/* 老師側邊欄 */
+#sidebar { width: 280px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; }
+.sidebar-section { border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; background: #fff; }
+
+/* 右側主區域 */
+#main-content { flex-grow: 1; padding: 20px; overflow-y: auto; height: 100vh; box-sizing: border-box; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+
+/* 監控小卡片 */
+.group-card { background: white; border-radius: 12px; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+
+.canvas-wrap { width: 100%; aspect-ratio: 16 / 10; background: #fff; border: 1px solid #ccc; border-radius: 8px; position: relative; overflow: hidden; }
+.canvas-wrap canvas { position: absolute; top: 0; left: 0; width: 100% !important; height: 100% !important; touch-action: none; }
+
+/* 工具欄樣式 */
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+.btn { padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.2s; }
+.btn:active { transform: scale(0.95); }
+.btn-photo { background: var(--success); color: white; }
+.btn-tool { background: #f0f0f0; border: 1px solid #ddd; }
+
+/* 身份顯示切換 */
+body.student-mode #sidebar { display: none; }
+#teacher-fs-overlay, #focus-mode { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: white; z-index: 9999; padding: 20px; box-sizing: border-box; flex-direction: column; }
+
+.cam-btn { position: relative; overflow: hidden; display: inline-block; vertical-align: middle; }
+.cam-btn input[type="file"] { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+<div class="sidebar-section" style="text-align:center;">
+<canvas id="qrcode-canvas"></canvas>
+<p style="font-size:12px; color:#666; margin-top:5px;">學生掃碼進入獨立板</p>
+</div>
+<div class="sidebar-section">
+<h4 style="margin:5px 0;">🏫 全班管理</h4>
+<button class="btn btn-tool" style="width:100%; margin-bottom:5px;" onclick="clearAllStrokes()">🧹 僅清空筆跡</button>
+<button class="btn btn-tool" style="width:100%; background:var(--teacher-red); color:white;" onclick="deleteAllBoards()">🔥 重設班級</button>
+</div>
+<div class="sidebar-section">
+<h4 style="margin:5px 0;">👨‍🏫 示範板 (點擊寫字/放題目)</h4>
+<div class="canvas-wrap" style="cursor:pointer;" onclick="openTeacherFS()"><canvas id="can-Teacher-preview"></canvas></div>
+</div>
+</div>
+
+<div id="main-content">
+<div id="student-tools" class="toolbar" style="display:none;">
+<input type="text" id="name-in" placeholder="在此輸入名字" style="width:120px; padding:10px; border:2px solid var(--primary); border-radius:8px;">
+<button class="btn btn-tool" onclick="setDrawColor('black')">黑</button>
+<button class="btn btn-tool" onclick="setDrawColor('blue')" style="color:blue;">藍</button>
+<button class="btn btn-tool" onclick="setDrawColor('red')" style="color:red;">紅</button>
+<button class="btn btn-tool" onclick="setDrawColor('eraser')">🧽</button>
+<button class="btn btn-tool" onclick="resetBoard(window.myId)">🧹 清空</button>
+<div class="cam-btn"><button class="btn btn-photo">📷 影相</button><input type="file" accept="image/*" capture="environment" onchange="handleFile(this, window.myId)"></div>
+</div>
+<div class="grid" id="group-grid"></div>
+</div>
+
+<div id="teacher-fs-overlay">
+<div class="toolbar">
+<h3 style="margin:0;">老師示範</h3>
+<button class="btn btn-tool" onclick="setDrawColor('black')">黑</button>
+<button class="btn btn-tool" onclick="setDrawColor('blue')" style="color:blue;">藍</button>
+<button class="btn btn-tool" onclick="setDrawColor('red')" style="color:red;">紅</button>
+<button class="btn btn-tool" onclick="setDrawColor('eraser')">🧽</button>
+<button class="btn btn-tool" onclick="resetBoard('Teacher')">🧹 清空</button>
+<div class="cam-btn"><button class="btn btn-photo">📷 影相(放題目)</button><input type="file" accept="image/*" capture="environment" onchange="handleFile(this, 'Teacher')"></div>
+<button class="btn btn-tool" style="margin-left:auto; background:#666; color:white;" onclick="closeTeacherFS()">❌ 關閉</button>
+</div>
+<div class="canvas-wrap" style="flex-grow:1;"><canvas id="can-Teacher-full"></canvas></div>
+</div>
+
+<div id="focus-mode">
+<div class="toolbar">
+<h3 id="focus-title" style="margin:0;">批改</h3>
+<button class="btn btn-tool" onclick="setDrawColor('black')">黑</button>
+<button class="btn btn-tool" onclick="setDrawColor('blue')" style="color:blue;">藍</button>
+<button class="btn btn-tool" onclick="setDrawColor('red')" style="color:red;">紅</button>
+<button class="btn btn-tool" onclick="setDrawColor('eraser')">🧽</button>
+<button class="btn btn-tool" id="focus-reset-btn">🧹 清空</button>
+<button class="btn btn-tool" style="margin-left:auto; background:#666; color:white;" onclick="closeFocus()">❌ 結束</button>
+</div>
+<div class="canvas-wrap" style="flex-grow:1;"><canvas id="focus-canvas"></canvas></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, onChildAdded, onChildChanged, onChildRemoved, push, set, remove, update } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAj8Oqoic2OOwJdXvXphvCil6rwPXZ4jlo",
+  authDomain: "cwc-blackboard.firebaseapp.com",
+  databaseURL: "https://cwc-blackboard-default-rtdb.firebaseio.com",
+  projectId: "cwc-blackboard",
+  storageBucket: "cwc-blackboard.firebasestorage.app",
+  messagingSenderId: "965322159810",
+  appId: "1:965322159810:web:7491aa36b6751af20ead5b"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const urlParams = new URLSearchParams(window.location.search);
+
+window.myId = urlParams.get('group');
+const isJoin = urlParams.get('mode') === 'join';
+
+// ========== 優化 1: 名字更新防抖 ==========
+let nameTimer = null;
+
+if (!window.myId && !isJoin) {
+  window.myId = "Teacher";
+  const joinUrl = window.location.origin + window.location.pathname + "?mode=join";
+  setTimeout(() => { QRCode.toCanvas(document.getElementById('qrcode-canvas'), joinUrl, { width: 140 }); }, 500);
+} else if (isJoin) {
+  const newId = "S_" + Math.random().toString(36).substr(2, 6);
+  window.location.href = window.location.origin + window.location.pathname + "?group=" + newId;
+} else {
+  document.body.classList.add('student-mode');
+  document.getElementById('student-tools').style.display = 'flex';
+  document.getElementById('name-in').addEventListener('input', (e) => {
+    clearTimeout(nameTimer);
+    nameTimer = setTimeout(() => {
+      update(ref(db, `boards/${window.myId}`), { name: e.target.value });
+    }, 500);
+  });
+}
+
+const V_WIDTH = 1000, V_HEIGHT = 625;
+let isDrawing = false, lastX = 0, lastY = 0, currentColor = 'black', activeId = null;
+const cachedData = {};
+const imgCache = {};
+const dirtyBoards = new Set();
+let rafPending = false;
+
+window.setDrawColor = (c) => currentColor = c;
+
+// ========== 優化 2: 筆劃批量上傳 (每80ms一批) ==========
+const strokeBuffer = {};       // { boardId: [stroke, stroke, ...] }
+const localStrokes = {};       // 本地即時預覽用 { boardId: [stroke, ...] }
+
+function flushStrokes(boardId) {
+  const buf = strokeBuffer[boardId];
+  if (!buf || buf.length === 0) return;
+  const toSend = buf.splice(0);
+
+  // 合併成 polyline 格式: 將連續同色線段打包成一條記錄
+  const groups = [];
+  let cur = null;
+  for (const s of toSend) {
+    if (!cur || cur.c !== s.c) {
+      cur = { c: s.c, pts: [s.x1, s.y1, s.x2, s.y2] };
+      groups.push(cur);
+    } else {
+      cur.pts.push(s.x2, s.y2);
+    }
+  }
+  for (const g of groups) {
+    push(ref(db, `boards/${boardId}/strokes`), g);
+  }
+}
+
+// 全域定時刷新所有 buffer
+setInterval(() => {
+  for (const bid of Object.keys(strokeBuffer)) {
+    flushStrokes(bid);
+  }
+}, 80);
+
+// ========== 優化 3: requestAnimationFrame 合併渲染 ==========
+function scheduleRender(boardId) {
+  dirtyBoards.add(boardId);
+  if (!rafPending) {
+    rafPending = true;
+    requestAnimationFrame(() => {
+      rafPending = false;
+      for (const bid of dirtyBoards) {
+        renderBoard(bid);
+      }
+      dirtyBoards.clear();
+    });
+  }
+}
+
+function renderBoard(gid) {
+  if (window.myId === "Teacher") {
+    if (gid === "Teacher") {
+      renderCanvas(document.getElementById('can-Teacher-preview'), cachedData["Teacher"]);
+      if (document.getElementById('teacher-fs-overlay').style.display === 'flex') {
+        renderCanvas(document.getElementById('can-Teacher-full'), cachedData["Teacher"]);
+      }
+    } else {
+      renderCanvas(document.getElementById(`can-${gid}`), cachedData[gid]);
+    }
+    if (activeId === gid) {
+      renderCanvas(document.getElementById('focus-canvas'), cachedData[gid]);
+    }
+  } else if (gid === window.myId) {
+    renderCanvas(document.getElementById(`can-${gid}`), cachedData[gid]);
+  }
+}
+
+// ========== 相機影相處理 (壓縮品質降低) ==========
+window.handleFile = (input, targetId) => {
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const cvs = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > 800) { h *= 800 / w; w = 800; }
+      cvs.width = w; cvs.height = h;
+      cvs.getContext('2d').drawImage(img, 0, 0, w, h);
+      update(ref(db, `boards/${targetId}`), { bgImg: cvs.toDataURL('image/jpeg', 0.35) });
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+};
+
+// ========== 渲染函數 (支援 polyline 格式) ==========
+function renderCanvas(can, gData) {
+  if (!can) return;
+  const ctx = can.getContext('2d');
+  const cw = can.offsetWidth, ch = can.offsetHeight;
+  if (can.width !== cw || can.height !== ch) { can.width = cw; can.height = ch; }
+  ctx.clearRect(0, 0, can.width, can.height);
+  if (!gData) return;
+  const sX = can.width / V_WIDTH, sY = can.height / V_HEIGHT;
+
+  // 背景圖
+  if (gData.bgImg) {
+    if (!imgCache[gData.bgImg]) {
+      const img = new Image();
+      img.onload = () => { imgCache[gData.bgImg] = img; scheduleRender(gData._id); };
+      img.src = gData.bgImg;
+    } else {
+      ctx.drawImage(imgCache[gData.bgImg], 0, 0, can.width, can.height);
+    }
+  }
+
+  // Firebase 筆劃
+  if (gData.strokes) {
+    Object.values(gData.strokes).forEach(s => {
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = s.c === 'eraser' ? 'white' : s.c;
+      ctx.lineWidth = s.c === 'eraser' ? 30 * sX : 4 * sX;
+      if (s.pts) {
+        // polyline 格式
+        ctx.beginPath();
+        ctx.moveTo(s.pts[0] * sX, s.pts[1] * sY);
+        for (let i = 2; i < s.pts.length; i += 2) {
+          ctx.lineTo(s.pts[i] * sX, s.pts[i + 1] * sY);
+        }
+        ctx.stroke();
+      } else if (s.x1 !== undefined) {
+        // 舊格式相容
+        ctx.beginPath();
+        ctx.moveTo(s.x1 * sX, s.y1 * sY);
+        ctx.lineTo(s.x2 * sX, s.y2 * sY);
+        ctx.stroke();
+      }
+    });
+  }
+
+  // 本地即時筆劃 (還沒上傳的)
+  const local = localStrokes[gData._id];
+  if (local && local.length > 0) {
+    for (const s of local) {
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = s.c === 'eraser' ? 'white' : s.c;
+      ctx.lineWidth = s.c === 'eraser' ? 30 * sX : 4 * sX;
+      ctx.beginPath();
+      ctx.moveTo(s.x1 * sX, s.y1 * sY);
+      ctx.lineTo(s.x2 * sX, s.y2 * sY);
+      ctx.stroke();
+    }
+  }
+}
+
+// ========== 優化 4: 精細監聽 (per-board) ==========
+const boardListeners = {};
+
+function listenBoard(gid) {
+  if (boardListeners[gid]) return;
+  boardListeners[gid] = true;
+  if (!cachedData[gid]) cachedData[gid] = { _id: gid };
+
+  // 監聽這個 board 的 metadata (name, bgImg)
+  onValue(ref(db, `boards/${gid}/name`), (snap) => {
+    if (!cachedData[gid]) cachedData[gid] = { _id: gid };
+    cachedData[gid].name = snap.val();
+    if (window.myId === "Teacher") {
+      const el = document.getElementById(`n-${gid}`);
+      if (el) el.textContent = snap.val() || '學生';
+    }
+  });
+
+  onValue(ref(db, `boards/${gid}/bgImg`), (snap) => {
+    if (!cachedData[gid]) cachedData[gid] = { _id: gid };
+    cachedData[gid].bgImg = snap.val();
+    scheduleRender(gid);
+  });
+
+  // 監聽 strokes (用 child 事件，增量更新)
+  if (!cachedData[gid].strokes) cachedData[gid].strokes = {};
+
+  onChildAdded(ref(db, `boards/${gid}/strokes`), (snap) => {
+    cachedData[gid].strokes[snap.key] = snap.val();
+    // 清除已上傳的本地筆劃
+    if (localStrokes[gid]) localStrokes[gid] = [];
+    scheduleRender(gid);
+  });
+
+  onChildRemoved(ref(db, `boards/${gid}/strokes`), (snap) => {
+    delete cachedData[gid].strokes[snap.key];
+    scheduleRender(gid);
+  });
+}
+
+function stopListenBoard(gid) {
+  // 注意: Firebase v9 的 off() 需要用 unsubscribe
+  // 簡化處理: 實際使用中 board 很少被刪除
+  delete boardListeners[gid];
+  delete cachedData[gid];
+}
+
+// ========== 老師：監聽 boards 列表 ==========
+if (window.myId === "Teacher") {
+  // 監聽 Teacher 自己的 board
+  listenBoard("Teacher");
+
+  // 監聽學生新增/移除
+  onChildAdded(ref(db, 'boards'), (snap) => {
+    const gid = snap.key;
+    if (!gid.startsWith("S_")) return;
+    listenBoard(gid);
+    // 建立卡片
+    const grid = document.getElementById('group-grid');
+    if (!document.getElementById(`card-${gid}`)) {
+      const card = document.createElement('div');
+      card.id = `card-${gid}`;
+      card.className = 'group-card';
+      card.innerHTML = `<div class="card-header"><strong>👤 <span id="n-${gid}">${cachedData[gid]?.name || '學生'}</span></strong><button class="btn btn-tool" onclick="openFocus('${gid}')">🔍 批改</button></div><div class="canvas-wrap"><canvas id="can-${gid}"></canvas></div>`;
+      grid.appendChild(card);
+    }
+  });
+
+  onChildRemoved(ref(db, 'boards'), (snap) => {
+    const gid = snap.key;
+    stopListenBoard(gid);
+    const card = document.getElementById(`card-${gid}`);
+    if (card) card.remove();
+  });
+} else {
+  // ========== 學生：只監聽自己 ==========
+  listenBoard(window.myId);
+
+  // 初始化畫板 (確保 board 文件存在)
+  update(ref(db, `boards/${window.myId}`), { name: '' });
+
+  const grid = document.getElementById('group-grid');
+  grid.innerHTML = `<div class="canvas-wrap" style="height:80vh;"><canvas id="can-${window.myId}"></canvas></div>`;
+  attachEvents(document.getElementById(`can-${window.myId}`), window.myId);
+}
+
+// ========== 優化 5: 事件處理 + 本地即時繪畫 ==========
+function attachEvents(canvas, gid) {
+  if (!canvas) return;
+  const getPos = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return [(cx - rect.left) * (V_WIDTH / rect.width), (cy - rect.top) * (V_HEIGHT / rect.height)];
+  };
+
+  canvas.onmousedown = canvas.ontouchstart = (e) => {
+    isDrawing = true;
+    [lastX, lastY] = getPos(e);
+  };
+
+  canvas.onmousemove = canvas.ontouchmove = (e) => {
+    if (!isDrawing) return;
+    if (e.cancelable) e.preventDefault();
+    const [x, y] = getPos(e);
+    const stroke = { x1: lastX, y1: lastY, x2: x, y2: y, c: currentColor };
+
+    // 本地即時顯示
+    if (!localStrokes[gid]) localStrokes[gid] = [];
+    localStrokes[gid].push(stroke);
+    scheduleRender(gid);
+
+    // 放入上傳 buffer
+    if (!strokeBuffer[gid]) strokeBuffer[gid] = [];
+    strokeBuffer[gid].push(stroke);
+
+    [lastX, lastY] = [x, y];
+  };
+
+  const end = () => {
+    if (isDrawing) {
+      isDrawing = false;
+      // 筆放開時立刻上傳剩餘筆劃
+      flushStrokes(gid);
+    }
+  };
+  canvas.onmouseup = canvas.onmouseleave = canvas.ontouchend = end;
+}
+
+// ========== 全域功能 ==========
+window.openFocus = (gid) => {
+  activeId = gid;
+  document.getElementById('focus-mode').style.display = 'flex';
+  document.getElementById('focus-title').textContent = `批改 - ${cachedData[gid]?.name || '學生'}`;
+  const cvs = document.getElementById('focus-canvas');
+  setTimeout(() => { attachEvents(cvs, gid); scheduleRender(gid); }, 50);
+};
+
+window.openTeacherFS = () => {
+  document.getElementById('teacher-fs-overlay').style.display = 'flex';
+  const cvs = document.getElementById('can-Teacher-full');
+  setTimeout(() => { attachEvents(cvs, "Teacher"); scheduleRender("Teacher"); }, 50);
+};
+
+window.closeFocus = () => { activeId = null; document.getElementById('focus-mode').style.display = 'none'; };
+window.closeTeacherFS = () => { document.getElementById('teacher-fs-overlay').style.display = 'none'; };
+
+window.resetBoard = (id) => {
+  if (confirm("確定清空？")) {
+    const n = cachedData[id]?.name || '學生';
+    localStrokes[id] = [];
+    strokeBuffer[id] = [];
+    set(ref(db, `boards/${id}`), { name: n });
+  }
+};
+
+window.clearAllStrokes = () => {
+  if (confirm("清空全班筆跡？")) {
+    Object.keys(cachedData).forEach(k => {
+      localStrokes[k] = [];
+      strokeBuffer[k] = [];
+      remove(ref(db, `boards/${k}/strokes`));
+    });
+  }
+};
+
+window.deleteAllBoards = () => {
+  if (confirm("重設所有學生？")) {
+    remove(ref(db, 'boards')).then(() => location.reload());
+  }
+};
+</script>
+</body>
+</html>
