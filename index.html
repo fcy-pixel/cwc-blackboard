@@ -8,6 +8,7 @@
 <style>
 :root { --teacher-red: #ff4d4d; --bg: #f5f7fa; --primary: #2196F3; --success: #4CAF50; }
 html, body { position: fixed; overflow: hidden; width: 100%; height: 100%; margin: 0; font-family: sans-serif; background: var(--bg); display: flex; }
+body.student-mode { position: static; overflow-y: auto; flex-direction: column; }
 
 /* 老師側邊欄 */
 #sidebar { width: 280px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; }
@@ -43,6 +44,7 @@ body.student-mode #sidebar { display: none; }
 .btn-ai:disabled { background: #ccc; cursor: not-allowed; }
 .btn-ai-all { background: #7B1FA2; color: white; }
 .ai-comment { margin-top: 8px; padding: 10px; background: #f3e5f5; border-radius: 8px; font-size: 13px; line-height: 1.5; border-left: 4px solid #9C27B0; display: none; white-space: pre-wrap; }
+body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px 20px; margin: 12px 20px 20px; border-radius: 12px; background: #fff3e0; border-left: 5px solid #FF9800; color: #333; }
 .ai-loading { color: #9C27B0; font-style: italic; }
 #ai-modal { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 99999; justify-content: center; align-items: center; }
 #ai-modal-box { background: white; border-radius: 16px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.2); }
@@ -399,8 +401,15 @@ if (window.myId === "Teacher") {
   update(ref(db, `boards/${window.myId}`), { name: '' });
 
   const grid = document.getElementById('group-grid');
-  grid.innerHTML = `<div class="canvas-wrap" style="height:80vh;"><canvas id="can-${window.myId}"></canvas></div><div class="ai-comment" id="ai-${window.myId}" style="display:none;"></div>`;
+  grid.innerHTML = `<div class="canvas-wrap" style="height:65vh;"><canvas id="can-${window.myId}"></canvas></div>`;
   attachEvents(document.getElementById(`can-${window.myId}`), window.myId);
+
+  // AI 評語區域放在畫板下方
+  const commentDiv = document.createElement('div');
+  commentDiv.className = 'ai-comment';
+  commentDiv.id = `ai-${window.myId}`;
+  commentDiv.style.display = 'none';
+  document.getElementById('main-content').appendChild(commentDiv);
 
   // 監聽老師發送的 AI 批改結果
   onValue(ref(db, `boards/${window.myId}/aiComment`), (snap) => {
@@ -555,7 +564,7 @@ async function callQwenVision(base64Img) {
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: base64Img } },
-          { type: 'text', text: '你是一位經驗豐富的小學數學老師，正在批改學生的數學練習。請用專業數學教學語言分析這張圖片。\n\n請按以下格式回覆：\n\n【題目分析】\n逐題列出：題號、算式/題目、學生答案、正確答案、✅/❌\n\n【數學概念診斷】\n- 指出學生掌握了哪些數學概念（如：進位加法、借位減法、乘法分配律等）\n- 如有錯誤，分析錯誤類型（如：計算錯誤、概念混淆、步驟遺漏、單位錯誤等）\n- 用數學語言解釋正確的解題方法\n\n【給學生的話】\n用溫暖鼓勵的語氣，針對表現給具體建議（2-3句）\n\n請用繁體中文回答。' }
+          { type: 'text', text: '你是一位小學數學老師，正在批改學生的數學練習。請看這張圖片並給出簡單批改。\n\n❗ 重要：看評語的是小學生，請用簡單易懂的語言。\n\n格式：\n每題一行：題號. 算式 = 學生答案 ✅/❌（錯的寫正確答案）\n\n最後用 1-2 句簡短評語：\n- 如果全對：表揚 + 鼓勵繼續保持\n- 如果有錯：指出哪個概念要注意（例如：「注意進位喔！」「乘法表再練習一下！」）+ 鼓勵\n\n請用繁體中文，全部內容不超過150字。' }
         ]
       }],
       max_tokens: 500
