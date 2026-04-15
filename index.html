@@ -67,7 +67,18 @@ body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px
 <div class="sidebar-section">
 <h4 style="margin:5px 0;">🤖 AI 批改設定</h4>
 <input type="password" id="qwen-key" placeholder="輸入 Qwen API Key" style="width:100%; padding:8px; border:2px solid #9C27B0; border-radius:8px; box-sizing:border-box; margin-bottom:8px; font-size:13px;">
-<button class="btn btn-ai-all" style="width:100%;" onclick="aiGradeAll()">🤖 一鍵批改全班</button>
+<div style="display:flex; align-items:center; justify-content:space-between; margin:8px 0; padding:8px; background:#f3e5f5; border-radius:8px;">
+<span style="font-size:13px; font-weight:bold;">📱 允許學生請求批改</span>
+<label style="position:relative; display:inline-block; width:50px; height:26px; cursor:pointer;">
+<input type="checkbox" id="ai-toggle" onchange="toggleStudentAI()" style="opacity:0; width:0; height:0;">
+<span id="ai-toggle-slider" style="position:absolute; top:0; left:0; right:0; bottom:0; background:#ccc; border-radius:13px; transition:0.3s;"></span>
+<span id="ai-toggle-knob" style="position:absolute; top:3px; left:3px; width:20px; height:20px; background:white; border-radius:50%; transition:0.3s;"></span>
+</label>
+</div>
+<div id="ai-toggle-status" style="font-size:11px; color:#999; margin-bottom:8px; text-align:center;">學生請求批改：關閉</div>
+<p style="font-size:11px; color:#4CAF50; margin:0 0 8px; line-height:1.4;">🔒 API Key 只存在老師瀏覽器，學生僅能發送請求，由老師端自動透過Key處理</p>
+<button class="btn btn-ai-all" style="width:100%; margin-bottom:5px;" onclick="aiGradeAll()">🤖 一鍵批改全班</button>
+<div id="ai-queue-status" style="font-size:12px; color:#9C27B0; text-align:center; display:none;"></div>
 </div>
 <div class="sidebar-section">
 <h4 style="margin:5px 0;">👨‍🏫 示範板 (點擊寫字/放題目)</h4>
@@ -84,6 +95,7 @@ body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px
 <button class="btn btn-tool" onclick="setDrawColor('eraser')">🧽</button>
 <button class="btn btn-tool" onclick="resetBoard(window.myId)">🧹 清空</button>
 <div class="cam-btn"><button class="btn btn-photo">📷 影相</button><input type="file" accept="image/*" capture="environment" onchange="handleFile(this, window.myId)"></div>
+<button class="btn btn-ai" id="student-ai-btn" style="display:none;" onclick="studentRequestGrade()">🤖 請求AI批改</button>
 </div>
 <div class="grid" id="group-grid"></div>
 </div>
@@ -152,7 +164,37 @@ if (!window.myId && !isJoin) {
   window.myId = "Teacher";
   const joinUrl = window.location.origin + window.location.pathname + "?mode=join";
   setTimeout(() => { QRCode.toCanvas(document.getElementById('qrcode-canvas'), joinUrl, { width: 140 }); }, 500);
-
+  // 老師離開頁面時關閉學生批改
+  window.addEventListener('beforeunload', () => { set(ref(db, 'settings/aiEnabled'), false); });
+  // 監聽學生 AI 批改請求，自動用本地 Key 處理
+  const processedRequests = new Set();
+  onValue(ref(db, 'boards'), (snap) => {
+    const boards = snap.val();
+    if (!boards) return;
+    const apiKey = document.getElementById('qwen-key')?.value.trim();
+    if (!apiKey) return;
+    Object.entries(boards).forEach(([gid, data]) => {
+      if (!gid.startsWith('S_') || !data.aiRequest) return;
+      const reqKey = `${gid}_${data.aiRequest}`;
+      if (processedRequests.has(reqKey)) return;
+      processedRequests.add(reqKey);
+      (async () => {
+        const statusEl = document.getElementById('ai-queue-status');
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = `⚙️ 正在批改 ${data.name || '學生'}...`; }
+        try {
+          const img = getCanvasImage(gid);
+          if (!img) { update(ref(db, `boards/${gid}`), { aiComment: '請先寫好答案再請求批改哦！', aiRequest: null }); return; }
+          const comment = await callQwenVision(img, apiKey);
+          update(ref(db, `boards/${gid}`), { aiComment: comment, aiRequest: null });
+          const el = document.getElementById(`ai-${gid}`);
+          if (el) { el.textContent = comment; el.style.display = 'block'; }
+        } catch (e) {
+          update(ref(db, `boards/${gid}`), { aiComment: '❌ 批改失敗，請稍後再試', aiRequest: null });
+        }
+        if (statusEl) statusEl.style.display = 'none';
+      })();
+    });
+  });
 } else if (isJoin) {
   const newId = "S_" + Math.random().toString(36).substr(2, 6);
   window.location.href = window.location.origin + window.location.pathname + "?group=" + newId;
@@ -444,17 +486,24 @@ if (window.myId === "Teacher") {
   commentDiv.style.display = 'none';
   document.getElementById('main-content').appendChild(commentDiv);
 
+  // 監聽老師開關學生批改請求功能
+  onValue(ref(db, 'settings/aiEnabled'), (snap) => {
+    const enabled = snap.val() === true;
+    const btn = document.getElementById('student-ai-btn');
+    if (btn) btn.style.display = enabled ? 'inline-block' : 'none';
+  });
   // 監聽老師發送的 AI 批改結果
   onValue(ref(db, `boards/${window.myId}/aiComment`), (snap) => {
     const comment = snap.val();
     const el = document.getElementById(`ai-${window.myId}`);
+    const btn = document.getElementById('student-ai-btn');
     if (el && comment) {
       el.textContent = comment;
       el.style.display = 'block';
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 請求AI批改'; }
     } else if (el) {
       el.style.display = 'none';
     }
-
   });
 }
 
@@ -544,7 +593,29 @@ window.deleteAllBoards = () => {
   }
 };
 
+// ========== 老師開關學生批改請求 ==========
+window.toggleStudentAI = () => {
+  const on = document.getElementById('ai-toggle').checked;
+  const key = document.getElementById('qwen-key').value.trim();
+  if (on && !key) {
+    alert('請先輸入 API Key');
+    document.getElementById('ai-toggle').checked = false;
+    return;
+  }
+  set(ref(db, 'settings/aiEnabled'), on);
+  document.getElementById('ai-toggle-status').textContent = '學生請求批改：' + (on ? '開啟 ✅' : '關閉');
+  document.getElementById('ai-toggle-slider').style.background = on ? '#9C27B0' : '#ccc';
+  document.getElementById('ai-toggle-knob').style.left = on ? '27px' : '3px';
+};
 
+// ========== 學生請求AI批改（僅發送請求，不接觸Key） ==========
+window.studentRequestGrade = () => {
+  const btn = document.getElementById('student-ai-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 等待老師批改...'; }
+  const el = document.getElementById(`ai-${window.myId}`);
+  if (el) { el.innerHTML = '<span class="ai-loading">🤖 已送出批改請求，等待老師處理中...</span>'; el.style.display = 'block'; }
+  update(ref(db, `boards/${window.myId}`), { aiRequest: Date.now() });
+};
 
 // ========== AI 批改功能 (Qwen Vision API) ==========
 function getCanvasImage(gid) {
