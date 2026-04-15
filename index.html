@@ -67,7 +67,16 @@ body.student-mode .ai-comment { font-size: 18px; line-height: 1.8; padding: 16px
 <div class="sidebar-section">
 <h4 style="margin:5px 0;">🤖 AI 批改設定</h4>
 <input type="password" id="qwen-key" placeholder="輸入 Qwen API Key" style="width:100%; padding:8px; border:2px solid #9C27B0; border-radius:8px; box-sizing:border-box; margin-bottom:8px; font-size:13px;">
-<button class="btn btn-tool" style="width:100%; margin-bottom:5px; background:#7B1FA2; color:white;" onclick="shareApiKey()">🔑 分享 Key 給學生</button>
+<button class="btn btn-tool" style="width:100%; margin-bottom:5px; background:#7B1FA2; color:white;" onclick="shareApiKey()">🔑 儲存 API Key</button>
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; padding:8px; background:#f3e5f5; border-radius:8px;">
+<span style="font-size:13px; font-weight:bold;">📱 學生AI批改</span>
+<label style="position:relative; display:inline-block; width:50px; height:26px; cursor:pointer;">
+<input type="checkbox" id="ai-toggle" onchange="toggleStudentAI()" style="opacity:0; width:0; height:0;">
+<span style="position:absolute; top:0; left:0; right:0; bottom:0; background:#ccc; border-radius:13px; transition:0.3s;"></span>
+<span id="ai-toggle-knob" style="position:absolute; top:3px; left:3px; width:20px; height:20px; background:white; border-radius:50%; transition:0.3s;"></span>
+</label>
+</div>
+<div id="ai-toggle-status" style="font-size:12px; color:#999; margin-bottom:8px; text-align:center;">學生AI批改：關閉</div>
 <button class="btn btn-ai-all" style="width:100%;" onclick="aiGradeAll()">🤖 一鍵批改全班</button>
 </div>
 <div class="sidebar-section">
@@ -154,6 +163,23 @@ if (!window.myId && !isJoin) {
   window.myId = "Teacher";
   const joinUrl = window.location.origin + window.location.pathname + "?mode=join";
   setTimeout(() => { QRCode.toCanvas(document.getElementById('qrcode-canvas'), joinUrl, { width: 140 }); }, 500);
+  // 同步 AI 開關狀態
+  onValue(ref(db, 'settings/aiEnabled'), (snap) => {
+    const on = snap.val() === true;
+    const tog = document.getElementById('ai-toggle');
+    if (tog) {
+      tog.checked = on;
+      const slider = tog.previousElementSibling;
+      const knob = document.getElementById('ai-toggle-knob');
+      if (slider) slider.style.background = on ? '#9C27B0' : '#ccc';
+      if (knob) knob.style.left = on ? '27px' : '3px';
+      document.getElementById('ai-toggle-status').textContent = '學生AI批改：' + (on ? '開啟 ✅' : '關閉');
+    }
+  });
+  onValue(ref(db, 'settings/apiKey'), (snap) => {
+    const key = snap.val();
+    if (key) { document.getElementById('qwen-key').value = key; window._sharedApiKey = key; }
+  });
 } else if (isJoin) {
   const newId = "S_" + Math.random().toString(36).substr(2, 6);
   window.location.href = window.location.origin + window.location.pathname + "?group=" + newId;
@@ -413,12 +439,15 @@ if (window.myId === "Teacher") {
   commentDiv.style.display = 'none';
   document.getElementById('main-content').appendChild(commentDiv);
 
-  // 監聽老師分享的 API Key，顯示學生端 AI 批改按鈕
+  // 監聽老師分享的 API Key
   onValue(ref(db, 'settings/apiKey'), (snap) => {
-    const key = snap.val();
+    window._sharedApiKey = snap.val() || '';
+  });
+  // 監聽老師開關學生AI批改
+  onValue(ref(db, 'settings/aiEnabled'), (snap) => {
+    const enabled = snap.val() === true;
     const btn = document.getElementById('student-ai-btn');
-    if (btn) btn.style.display = key ? 'inline-block' : 'none';
-    window._sharedApiKey = key || '';
+    if (btn) btn.style.display = (enabled && window._sharedApiKey) ? 'inline-block' : 'none';
   });
 
   // 監聽老師發送的 AI 批改結果
@@ -520,12 +549,30 @@ window.deleteAllBoards = () => {
   }
 };
 
-// ========== 老師分享 API Key ==========
+// ========== 老師儲存 API Key ==========
 window.shareApiKey = () => {
   const key = document.getElementById('qwen-key').value.trim();
   if (!key) { alert('請先輸入 API Key'); return; }
   set(ref(db, 'settings/apiKey'), key);
-  alert('已分享 API Key 給學生，學生端會出現 AI批改 按鈕');
+  alert('API Key 已儲存');
+};
+
+// ========== 老師開關學生AI批改 ==========
+window.toggleStudentAI = () => {
+  const on = document.getElementById('ai-toggle').checked;
+  const key = document.getElementById('qwen-key').value.trim() || window._sharedApiKey;
+  if (on && !key) {
+    alert('請先輸入並儲存 API Key');
+    document.getElementById('ai-toggle').checked = false;
+    return;
+  }
+  if (on && key) set(ref(db, 'settings/apiKey'), key);
+  set(ref(db, 'settings/aiEnabled'), on);
+  document.getElementById('ai-toggle-status').textContent = '學生AI批改：' + (on ? '開啟 ✅' : '關閉');
+  const slider = document.getElementById('ai-toggle').previousElementSibling;
+  const knob = document.getElementById('ai-toggle-knob');
+  slider.style.background = on ? '#9C27B0' : '#ccc';
+  knob.style.left = on ? '27px' : '3px';
 };
 
 // ========== 學生端 AI 自批 ==========
